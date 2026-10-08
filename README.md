@@ -1,0 +1,22 @@
+# Gestion eau chaude — intégration Home Assistant
+
+Pilotage du chauffe-eau (surplus solaire le jour, heures creuses l'hiver) avec un
+panneau dédié dans la barre latérale (« Eau chaude »).
+
+## Installation
+1. Copier le dossier `custom_components/gestion_eau_chaude` dans `/config/custom_components/`.
+2. Redémarrer Home Assistant.
+3. Paramètres → Appareils et services → Ajouter une intégration → **Gestion eau chaude**.
+   Les entités et seuils par défaut sont ceux du script d'origine.
+4. **Arrêter le module « eau chaude » de l'addon (HA Couteau Suisse)** : deux pilotages
+   sur le même interrupteur se contrediraient.
+5. Si le panneau n'apparaît pas : recharger la page avec Ctrl+F5.
+
+## Entités créées
+- `switch` Marche forcée
+- `sensor` État, Énergie du jour, Énergie solaire du jour, Énergie heures creuses du jour, Surplus solaire
+- `binary_sensor` A chauffé au solaire aujourd'hui, Chauffe heures creuses prévue, Cycle de chauffe terminé
+
+## Réglages
+Paramètres → Appareils et services → Gestion eau chaude → Configurer
+(entités, seuils, plages horaires, webhook Discord).

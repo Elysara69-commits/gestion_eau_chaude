@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Gestion eau chaude",
+        "description": "Pick the entities used to drive the water heater and set the thresholds. Defaults come from the original script.",
+        "data": {
+          "solar_power": "Solar production (W)",
+          "battery_soc": "Battery state of charge (%)",
+          "grid_import": "Grid import (W)",
+          "house_power": "House consumption (W)",
+          "heater_power": "Water heater power (W)",
+          "heater_switch": "Water heater switch",
+          "start_solar_w": "Solar start: minimum production",
+          "min_surplus_w": "Solar start: minimum surplus (production - house)",
+          "start_soc": "Solar start: minimum battery",
+          "stop_soc": "Solar stop: battery below this level",
+          "max_grid_import_w": "Overload: abnormal grid import",
+          "max_house_power_w": "Overload: house consumption too high",
+          "heater_off_w": "Power below which the tank is considered off",
+          "solar_start_h": "Solar window start (hour)",
+          "solar_end_h": "Solar window end (hour)",
+          "hc_start_h": "Off-peak start (hour)",
+          "hc_end_h": "Off-peak end (hour)",
+          "discord_webhook_url": "Discord webhook (optional)"
+        }
+      }
+    },
+    "error": {
+      "soc_hysteresis": "Battery start level must be strictly above the stop level.",
+      "bad_hours": "Time windows must go from start hour to end hour without crossing midnight."
+    },
+    "abort": {
+      "already_configured": "The integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Water heater settings",
+        "data": {
+          "solar_power": "Solar production (W)",
+          "battery_soc": "Battery state of charge (%)",
+          "grid_import": "Grid import (W)",
+          "house_power": "House consumption (W)",
+          "heater_power": "Water heater power (W)",
+          "heater_switch": "Water heater switch",
+          "start_solar_w": "Solar start: minimum production",
+          "min_surplus_w": "Solar start: minimum surplus (production - house)",
+          "start_soc": "Solar start: minimum battery",
+          "stop_soc": "Solar stop: battery below this level",
+          "max_grid_import_w": "Overload: abnormal grid import",
+          "max_house_power_w": "Overload: house consumption too high",
+          "heater_off_w": "Power below which the tank is considered off",
+          "solar_start_h": "Solar window start (hour)",
+          "solar_end_h": "Solar window end (hour)",
+          "hc_start_h": "Off-peak start (hour)",
+          "hc_end_h": "Off-peak end (hour)",
+          "discord_webhook_url": "Discord webhook (optional)"
+        }
+      }
+    },
+    "error": {
+      "soc_hysteresis": "Battery start level must be strictly above the stop level.",
+      "bad_hours": "Time windows must go from start hour to end hour without crossing midnight."
+    }
+  }
+}

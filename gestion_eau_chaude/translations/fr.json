@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Gestion eau chaude",
+        "description": "Choisis les entités utilisées par le pilotage du chauffe-eau et règle les seuils. Les valeurs par défaut sont celles du script d'origine.",
+        "data": {
+          "solar_power": "Production solaire (W)",
+          "battery_soc": "Batterie : état de charge (%)",
+          "grid_import": "Import réseau (W)",
+          "house_power": "Consommation de la maison (W)",
+          "heater_power": "Puissance du chauffe-eau (W)",
+          "heater_switch": "Interrupteur du chauffe-eau",
+          "start_solar_w": "Démarrage solaire : production minimale",
+          "min_surplus_w": "Démarrage solaire : surplus minimal (production - maison)",
+          "start_soc": "Démarrage solaire : batterie minimale",
+          "stop_soc": "Arrêt solaire : batterie sous ce seuil",
+          "max_grid_import_w": "Surconsommation : import réseau anormal",
+          "max_house_power_w": "Surconsommation : consommation maison trop forte",
+          "heater_off_w": "Puissance sous laquelle le ballon est considéré arrêté",
+          "solar_start_h": "Début de la plage solaire (heure)",
+          "solar_end_h": "Fin de la plage solaire (heure)",
+          "hc_start_h": "Début des heures creuses (heure)",
+          "hc_end_h": "Fin des heures creuses (heure)",
+          "discord_webhook_url": "Webhook Discord (optionnel)"
+        }
+      }
+    },
+    "error": {
+      "soc_hysteresis": "Le seuil de démarrage de la batterie doit être strictement supérieur au seuil d'arrêt.",
+      "bad_hours": "Les plages horaires doivent aller de l'heure de début à l'heure de fin, sans passer minuit."
+    },
+    "abort": {
+      "already_configured": "L'intégration est déjà configurée."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Réglages du chauffe-eau",
+        "data": {
+          "solar_power": "Production solaire (W)",
+          "battery_soc": "Batterie : état de charge (%)",
+          "grid_import": "Import réseau (W)",
+          "house_power": "Consommation de la maison (W)",
+          "heater_power": "Puissance du chauffe-eau (W)",
+          "heater_switch": "Interrupteur du chauffe-eau",
+          "start_solar_w": "Démarrage solaire : production minimale",
+          "min_surplus_w": "Démarrage solaire : surplus minimal (production - maison)",
+          "start_soc": "Démarrage solaire : batterie minimale",
+          "stop_soc": "Arrêt solaire : batterie sous ce seuil",
+          "max_grid_import_w": "Surconsommation : import réseau anormal",
+          "max_house_power_w": "Surconsommation : consommation maison trop forte",
+          "heater_off_w": "Puissance sous laquelle le ballon est considéré arrêté",
+          "solar_start_h": "Début de la plage solaire (heure)",
+          "solar_end_h": "Fin de la plage solaire (heure)",
+          "hc_start_h": "Début des heures creuses (heure)",
+          "hc_end_h": "Fin des heures creuses (heure)",
+          "discord_webhook_url": "Webhook Discord (optionnel)"
+        }
+      }
+    },
+    "error": {
+      "soc_hysteresis": "Le seuil de démarrage de la batterie doit être strictement supérieur au seuil d'arrêt.",
+      "bad_hours": "Les plages horaires doivent aller de l'heure de début à l'heure de fin, sans passer minuit."
+    }
+  }
+}

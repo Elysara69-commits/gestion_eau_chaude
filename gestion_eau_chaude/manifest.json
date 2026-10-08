@@ -1,0 +1,13 @@
+{
+  "domain": "gestion_eau_chaude",
+  "name": "Gestion eau chaude",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["http", "frontend", "panel_custom", "websocket_api"],
+  "documentation": "https://www.home-assistant.io/",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://www.home-assistant.io/",
+  "requirements": [],
+  "version": "1.0.0"
+}
