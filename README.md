@@ -9,7 +9,7 @@ panneau dédié dans la barre latérale (« Eau chaude »).
 ## Installation
 1. Copier le dossier `custom_components/gestion_eau_chaude` dans `/config/custom_components/`.
 2. Redémarrer Home Assistant.
-
+3. Paramère -> appareils et services -> bouton ajouter une intégration : gestion eau chaude
 5. Si le panneau n'apparaît pas : recharger la page avec Ctrl+F5.
 
 ## Entités créées
