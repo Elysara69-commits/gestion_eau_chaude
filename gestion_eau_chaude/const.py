@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "gestion_eau_chaude"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 PANEL_URL = "gestion_eau_chaude"
 PANEL_ELEMENT = "gestion-eau-chaude-panel"
@@ -69,6 +69,7 @@ RETRY_DELAY_S = 30      # pause après un ordre échoué
 MANUAL_LOCK_S = 3600    # pas de redémarrage automatique pendant 1 h après un arrêt manuel
 SWITCH_OVERRIDE_S = 10  # durée de validité de l'état « optimiste » après un ordre
 MAX_DT_S = 120          # plafond du pas de temps pour l'intégration d'énergie
+MIX_STALE_S = 300       # si les mesures manquent, on réutilise la dernière répartition de sources pendant 5 min
 
 WINTER_MONTHS = {11, 12, 1, 2, 3}
 

@@ -50,6 +50,7 @@ from .const import (
     MANUAL_LOCK_S,
     MAX_DT_S,
     MAX_EVENTS,
+    MIX_STALE_S,
     OVERLOAD_HOLD_S,
     OVERLOAD_LOCK_S,
     RETRY_DELAY_S,
@@ -160,6 +161,32 @@ def logical_day(now: datetime, hc_end_h: int) -> date:
     return (now - timedelta(hours=hc_end_h)).date()
 
 
+SOURCES = ("solar", "battery", "grid")
+
+
+def supply_mix(solar: float | None, grid: float | None, house: float | None) -> dict[str, float] | None:
+    """Origine de l'électricité consommée par la maison, en fractions (somme = 1).
+
+    - réseau   : import mesuré (plafonné à la conso maison) ;
+    - solaire  : production consommée directement (le solaire passe avant la batterie) ;
+    - batterie : le reste, c'est-à-dire ce que ni le solaire ni le réseau ne couvrent.
+
+    Le chauffe-eau est alimenté dans la même proportion que le reste de la maison
+    (on ne peut pas savoir quel électron va où : répartition au prorata).
+    Retourne None si les mesures manquent ou si la maison ne consomme rien.
+    """
+    if solar is None or grid is None or house is None or house <= 0:
+        return None
+    grid_w = min(max(0.0, grid), house)
+    solar_w = min(max(0.0, solar), house - grid_w)
+    battery_w = house - grid_w - solar_w
+    return {
+        "solar": solar_w / house,
+        "battery": battery_w / house,
+        "grid": grid_w / house,
+    }
+
+
 # =============================================================================
 # Contrôleur
 # =============================================================================
@@ -178,7 +205,8 @@ class Controller:
         self.lock_until = 0.0                 # horodatage epoch (anti-yoyo)
         self.lock_reason: str | None = None
         self.day: str | None = None           # jour calendaire des compteurs
-        self.kwh: dict[str, float] = {"solar": 0.0, "night": 0.0, "manual": 0.0}
+        self.kwh: dict[str, float] = {"solar": 0.0, "night": 0.0, "manual": 0.0}  # par MODE de chauffe
+        self.src_kwh: dict[str, float] = {k: 0.0 for k in SOURCES}                # par SOURCE d'énergie
         self.ran_solar = False
         self.ran_night = False
         self.events: list[dict[str, str]] = []
@@ -188,6 +216,9 @@ class Controller:
         self._fail_alerted = False
         self._switch_override: tuple[str, float] | None = None
         self._last_mono: float | None = None
+        self._mix: dict[str, float] | None = None       # dernière répartition valide
+        self._mix_at = 0.0                              # monotonic de cette répartition
+        self._mix_live: dict[str, float] | None = None  # répartition utilisée au dernier cycle
         self._ctx: dict[str, Any] = {}
         self.last: dict[str, Any] = {}
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -277,6 +308,12 @@ class Controller:
                 self.kwh[key] = float(kwh.get(key, 0.0))
             except (TypeError, ValueError):
                 self.kwh[key] = 0.0
+        src = data.get("src_kwh") or {}
+        for key in self.src_kwh:
+            try:
+                self.src_kwh[key] = float(src.get(key, 0.0))
+            except (TypeError, ValueError):
+                self.src_kwh[key] = 0.0
         self.ran_solar = bool(data.get("ran_solar", False))
         self.ran_night = bool(data.get("ran_night", False))
         self.events = list(data.get("events") or [])[-MAX_EVENTS:]
@@ -289,6 +326,7 @@ class Controller:
             "lock_reason": self.lock_reason,
             "day": self.day,
             "kwh": self.kwh,
+            "src_kwh": self.src_kwh,
             "ran_solar": self.ran_solar,
             "ran_night": self.ran_night,
             "events": self.events,
@@ -441,18 +479,40 @@ class Controller:
             self._save()
 
     # --- énergie -------------------------------------------------------------------
-    def _account_energy(self, now: datetime, mono: float, heater_w: float | None) -> None:
+    def _account_energy(
+        self,
+        now: datetime,
+        mono: float,
+        heater_w: float | None,
+        solar: float | None,
+        grid: float | None,
+        house: float | None,
+    ) -> None:
         today = now.date().isoformat()
         if self.day != today:
             self.day = today
             self.kwh = {"solar": 0.0, "night": 0.0, "manual": 0.0}
+            self.src_kwh = {k: 0.0 for k in SOURCES}
             self.ran_solar = False
             self.ran_night = False
             self._save()
+
+        # Répartition solaire / batterie / réseau (indépendante du mode : vaut aussi en marche forcée)
+        mix = supply_mix(solar, grid, house)
+        if mix is not None:
+            self._mix, self._mix_at = mix, mono
+        elif self._mix is not None and mono - self._mix_at <= MIX_STALE_S:
+            mix = self._mix  # mesure absente : on garde la dernière répartition connue (5 min max)
+        self._mix_live = mix
+
         if self._last_mono is not None and heater_w is not None and heater_w > 0:
             dt = min(mono - self._last_mono, MAX_DT_S)
+            energy = heater_w * dt / 3_600_000  # kWh
             key = self.mode if self.mode in self.kwh else "manual"
-            self.kwh[key] += heater_w * dt / 3_600_000
+            self.kwh[key] += energy
+            if mix is not None:
+                for src in SOURCES:
+                    self.src_kwh[src] += energy * mix[src]
             if heater_w > self.s.heater_off_w:
                 if key == "solar":
                     self.ran_solar = True
@@ -480,7 +540,7 @@ class Controller:
         heater_w = self._num(s.heater_power)
         sw = self._switch_state(mono)
 
-        self._account_energy(now, mono, heater_w)
+        self._account_energy(now, mono, heater_w, solar, grid, house)
         self._sync_mode(sw)
 
         on, off = sw == "on", sw == "off"
@@ -659,6 +719,14 @@ class Controller:
             night_plan = "planned"
 
         total = sum(self.kwh.values())
+        src_total = sum(self.src_kwh.values())
+        unassigned = max(0.0, total - src_total)  # énergie sans mesure fiable (ex. mise à jour en cours de journée)
+        mix = self._mix_live
+        mix_w = (
+            {k: round(heater_w * mix[k]) for k in SOURCES}
+            if mix is not None and heater_w is not None and heater_w > 0
+            else None
+        )
         return {
             "ts": now.isoformat(timespec="seconds"),
             "hour": now.hour + now.minute / 60 + now.second / 3600,
@@ -696,9 +764,19 @@ class Controller:
             "night_plan": night_plan,
             "energy": {
                 "total": round(total, 3),
-                "solar": round(self.kwh["solar"], 3),
-                "night": round(self.kwh["night"], 3),
-                "manual": round(self.kwh["manual"], 3),
+                "solar": round(self.src_kwh["solar"], 3),
+                "battery": round(self.src_kwh["battery"], 3),
+                "grid": round(self.src_kwh["grid"], 3),
+                "unassigned": round(unassigned, 3),
+                "by_mode": {
+                    "solar": round(self.kwh["solar"], 3),
+                    "night": round(self.kwh["night"], 3),
+                    "manual": round(self.kwh["manual"], 3),
+                },
+            },
+            "mix": {
+                "fractions": {k: round(mix[k], 4) for k in SOURCES} if mix is not None else None,
+                "heater_w": mix_w,
             },
             "ran_solar": self.ran_solar,
             "ran_night": self.ran_night,

@@ -13,6 +13,12 @@ const STATUS = {
   standby:       { label: "Veille",                             color: "#90a4ae", heat: 0.12 },
 };
 
+const SOURCES = [
+  { k: "solar",   icon: "☀️", label: "Solaire",  color: "#ffb300" },
+  { k: "battery", icon: "🔋", label: "Batterie", color: "#66bb6a" },
+  { k: "grid",    icon: "⚡", label: "Réseau",   color: "#5c8dff" },
+];
+
 const MODE_LABEL = { solar: "☀️ Solaire", night: "🌙 Heures creuses", manual: "🔧 Forcé / manuel" };
 
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
@@ -131,6 +137,15 @@ const TEMPLATE = `
   .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: var(--c); }
   .legend b { color: var(--primary-text-color, #eee); font-weight: 500; font-variant-numeric: tabular-nums; }
 
+  .legend em { font-style: normal; opacity: .8; font-size: 12px; margin-left: 4px; }
+  .modes { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .modes .chips { margin-top: 6px; }
+  .selfshare { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .selfshare b { color: var(--primary-text-color, #eee); font-weight: 500; }
+  .mix { width: 100%; margin-top: 8px; display: none; }
+  .mix .stack { height: 10px; margin: 6px 0; }
+  .mix .legend { justify-content: center; gap: 4px 14px; font-size: 12px; }
+
   .timeline { position: relative; height: 34px; background: var(--line); border-radius: 8px; margin: 22px 0 22px; }
   .timeline .seg { position: absolute; top: 0; bottom: 0; border-radius: 8px; opacity: .85; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #111; font-weight: 600; overflow: hidden; }
   .timeline .now { position: absolute; top: -8px; bottom: -8px; width: 3px; background: #fff; border-radius: 2px; box-shadow: 0 0 8px #fff; z-index: 2; }
@@ -238,6 +253,7 @@ const TEMPLATE = `
       <div class="power">
         <div><b id="heater-big">—</b><small>W</small></div>
         <div id="source">—</div>
+        <div class="mix" id="mix"></div>
       </div>
 
       <div class="card force">
@@ -257,11 +273,26 @@ const TEMPLATE = `
     <div class="card">
       <h2><ha-icon icon="mdi:lightning-bolt"></ha-icon>Consommation du jour</h2>
       <div class="energy"><b id="kwh-total">0,00</b><small>kWh</small></div>
-      <div class="stack"><i id="seg-solar" style="background:#ffb300;width:0"></i><i id="seg-night" style="background:#7c9cff;width:0"></i><i id="seg-manual" style="background:#ff7043;width:0"></i></div>
+      <div class="stack">
+        <i id="seg-solar" style="background:#ffb300;width:0"></i>
+        <i id="seg-battery" style="background:#66bb6a;width:0"></i>
+        <i id="seg-grid" style="background:#5c8dff;width:0"></i>
+        <i id="seg-unassigned" style="background:#78909c;width:0"></i>
+      </div>
       <div class="legend">
-        <span style="--c:#ffb300">Solaire <b id="kwh-solar">0,00</b> kWh</span>
-        <span style="--c:#7c9cff">Heures creuses <b id="kwh-night">0,00</b> kWh</span>
-        <span style="--c:#ff7043">Forcé <b id="kwh-manual">0,00</b> kWh</span>
+        <span style="--c:#ffb300">Solaire <b id="kwh-solar">0,00</b> kWh<em id="pct-solar"></em></span>
+        <span style="--c:#66bb6a">Batterie <b id="kwh-battery">0,00</b> kWh<em id="pct-battery"></em></span>
+        <span style="--c:#5c8dff">Réseau <b id="kwh-grid">0,00</b> kWh<em id="pct-grid"></em></span>
+        <span style="--c:#78909c" id="lg-unassigned">Non réparti <b id="kwh-unassigned">0,00</b> kWh</span>
+      </div>
+      <div class="selfshare" id="selfshare"></div>
+      <div class="modes">
+        Par mode de chauffe
+        <div class="chips">
+          <span>☀️ Solaire <b id="mode-solar">0,00</b> kWh</span>
+          <span>🌙 Heures creuses <b id="mode-night">0,00</b> kWh</span>
+          <span>🔧 Forcé <b id="mode-manual">0,00</b> kWh</span>
+        </div>
       </div>
     </div>
 
@@ -502,21 +533,43 @@ class GestionEauChaudePanel extends HTMLElement {
     this._metric("heater", v.heater_w, 2500, [set.heater_off_w], `Considéré arrêté sous ${W(set.heater_off_w)} W`,
       heating ? "warn" : "cold");
 
-    // Énergie du jour
-    const e = snap.energy;
+    // Énergie du jour : par SOURCE (solaire / batterie / réseau), puis rappel par mode
+    const e = snap.energy, bm = e.by_mode;
+    const assigned = e.solar + e.battery + e.grid;
+    const tot = Math.max(e.total, assigned) || 1;
     this._txt("kwh-total", nf2.format(e.total));
-    this._txt("kwh-solar", nf2.format(e.solar));
-    this._txt("kwh-night", nf2.format(e.night));
-    this._txt("kwh-manual", nf2.format(e.manual));
-    const tot = e.total || 1;
-    this._el["seg-solar"].style.width = (e.solar / tot) * 100 + "%";
-    this._el["seg-night"].style.width = (e.night / tot) * 100 + "%";
-    this._el["seg-manual"].style.width = (e.manual / tot) * 100 + "%";
+    for (const s of SOURCES) {
+      this._txt("kwh-" + s.k, nf2.format(e[s.k]));
+      this._txt("pct-" + s.k, assigned > 0.0005 ? `(${Math.round((e[s.k] / assigned) * 100)} %)` : "");
+      this._el["seg-" + s.k].style.width = (e[s.k] / tot) * 100 + "%";
+    }
+    this._el["seg-unassigned"].style.width = (e.unassigned / tot) * 100 + "%";
+    this._txt("kwh-unassigned", nf2.format(e.unassigned));
+    this._el["lg-unassigned"].style.display = e.unassigned > 0.005 ? "" : "none";
+    this._html("selfshare", assigned > 0.0005
+      ? `Part non prélevée sur le réseau : <b>${Math.round(((e.solar + e.battery) / assigned) * 100)} %</b> (solaire + batterie)`
+      : "");
+    this._txt("mode-solar", nf2.format(bm.solar));
+    this._txt("mode-night", nf2.format(bm.night));
+    this._txt("mode-manual", nf2.format(bm.manual));
+
+    // Alimentation du chauffe-eau en ce moment (valable aussi en marche forcée)
+    const mixEl = this._el.mix;
+    const fr = snap.mix && snap.mix.fractions, mw = snap.mix && snap.mix.heater_w;
+    if (fr && mw && v.heater_w != null && v.heater_w > set.heater_off_w) {
+      mixEl.style.display = "block";
+      this._html("mix",
+        `<div class="stack">${SOURCES.map((s) => `<i style="background:${s.color};width:${fr[s.k] * 100}%"></i>`).join("")}</div>` +
+        `<div class="legend">${SOURCES.map((s) =>
+          `<span style="--c:${s.color}">${s.icon} <b>${W(mw[s.k])}</b> W<em>${Math.round(fr[s.k] * 100)} %</em></span>`).join("")}</div>`);
+    } else {
+      mixEl.style.display = "none";
+    }
 
     // Aujourd'hui
     this._row("r-solar", snap.ran_solar ? "ok" : "",
       snap.ran_solar ? "A chauffé sur le solaire aujourd'hui" : "Pas encore chauffé sur le solaire",
-      snap.ran_solar ? `${nf2.format(e.solar)} kWh d'origine solaire` : `Plage solaire ${hh(sch.solar_start_h)}–${hh(sch.solar_end_h)}`);
+      snap.ran_solar ? `${nf2.format(bm.solar)} kWh chauffés en mode solaire` : `Plage solaire ${hh(sch.solar_start_h)}–${hh(sch.solar_end_h)}`);
 
     const plan = {
       running:    ["warn", "Chauffe en heures creuses en cours", `Jusqu'à ${hh(sch.hc_end_h)}`],
@@ -524,7 +577,7 @@ class GestionEauChaudePanel extends HTMLElement {
       not_needed: ["ok",   "Heures creuses : inutile cette nuit", "Cycle de chauffe déjà terminé"],
       off_season: ["",     "Heures creuses : hors saison", "Actives de novembre à mars uniquement"],
     }[snap.night_plan];
-    this._row("r-night", plan[0], snap.ran_night ? "A chauffé en heures creuses (" + nf2.format(e.night) + " kWh)" : plan[1],
+    this._row("r-night", plan[0], snap.ran_night ? "A chauffé en heures creuses (" + nf2.format(bm.night) + " kWh)" : plan[1],
       snap.ran_night ? plan[1] : plan[2]);
 
     this._row("r-cycle", snap.cycle_done ? "ok" : "",
