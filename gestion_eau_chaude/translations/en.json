@@ -15,14 +15,17 @@
           "min_surplus_w": "Solar start: minimum surplus (production - house)",
           "start_soc": "Solar start: minimum battery",
           "stop_soc": "Solar stop: battery below this level",
-          "max_grid_import_w": "Overload: abnormal grid import",
-          "max_house_power_w": "Overload: house consumption too high",
+          "max_grid_import_w": "Pause: abnormal grid import",
+          "max_house_power_w": "Pause: house consumption too high (contract limit minus a margin)",
           "heater_off_w": "Power below which the tank is considered off",
           "solar_start_h": "Solar window start (hour)",
           "solar_end_h": "Solar window end (hour)",
           "hc_start_h": "Off-peak start (hour)",
           "hc_end_h": "Off-peak end (hour)",
-          "discord_webhook_url": "Discord webhook (optional)"
+          "discord_webhook_url": "Discord webhook (optional)",
+          "heater_nominal_w": "Heater power (W): checks it fits before (re)starting",
+          "night_all_year": "Off-peak heating all year if solar was not enough (otherwise November to March)",
+          "heating_priority_entity": "Heating priority: \"heating wants solar\" sensor (optional)"
         }
       }
     },
@@ -49,14 +52,17 @@
           "min_surplus_w": "Solar start: minimum surplus (production - house)",
           "start_soc": "Solar start: minimum battery",
           "stop_soc": "Solar stop: battery below this level",
-          "max_grid_import_w": "Overload: abnormal grid import",
-          "max_house_power_w": "Overload: house consumption too high",
+          "max_grid_import_w": "Pause: abnormal grid import",
+          "max_house_power_w": "Pause: house consumption too high (contract limit minus a margin)",
           "heater_off_w": "Power below which the tank is considered off",
           "solar_start_h": "Solar window start (hour)",
           "solar_end_h": "Solar window end (hour)",
           "hc_start_h": "Off-peak start (hour)",
           "hc_end_h": "Off-peak end (hour)",
-          "discord_webhook_url": "Discord webhook (optional)"
+          "discord_webhook_url": "Discord webhook (optional)",
+          "heater_nominal_w": "Heater power (W): checks it fits before (re)starting",
+          "night_all_year": "Off-peak heating all year if solar was not enough (otherwise November to March)",
+          "heating_priority_entity": "Heating priority: \"heating wants solar\" sensor (optional)"
         }
       }
     },

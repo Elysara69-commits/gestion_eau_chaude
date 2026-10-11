@@ -30,13 +30,16 @@ from .const import (
     CONF_GRID_IMPORT,
     CONF_HC_END_H,
     CONF_HC_START_H,
+    CONF_HEATER_NOMINAL_W,
     CONF_HEATER_OFF_W,
     CONF_HEATER_POWER,
     CONF_HEATER_SWITCH,
+    CONF_HEATING_PRIORITY,
     CONF_HOUSE_POWER,
     CONF_MAX_GRID_IMPORT_W,
     CONF_MAX_HOUSE_POWER_W,
     CONF_MIN_SURPLUS_W,
+    CONF_NIGHT_ALL_YEAR,
     CONF_SOLAR_END_H,
     CONF_SOLAR_POWER,
     CONF_SOLAR_START_H,
@@ -53,6 +56,7 @@ from .const import (
     MIX_STALE_S,
     OVERLOAD_HOLD_S,
     OVERLOAD_LOCK_S,
+    RESUME_HOLD_S,
     RETRY_DELAY_S,
     SOLAR_GRACE_S,
     SOLAR_HOLD_S,
@@ -60,6 +64,8 @@ from .const import (
     SWITCH_OVERRIDE_S,
     TICK_S,
     WINTER_MONTHS,
+    YIELD_HOLD_S,
+    YIELD_LOCK_S,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +92,9 @@ class Settings:
     stop_soc: float
     max_grid_import_w: float
     max_house_power_w: float
+    heater_nominal_w: float
+    heating_priority: str
+    night_all_year: bool
     heater_off_w: float
     min_surplus_w: float
     solar_start_h: int
@@ -109,6 +118,9 @@ class Settings:
             stop_soc=float(raw[CONF_STOP_SOC]),
             max_grid_import_w=float(raw[CONF_MAX_GRID_IMPORT_W]),
             max_house_power_w=float(raw[CONF_MAX_HOUSE_POWER_W]),
+            heater_nominal_w=float(raw[CONF_HEATER_NOMINAL_W]),
+            heating_priority=str(raw.get(CONF_HEATING_PRIORITY) or ""),
+            night_all_year=bool(raw[CONF_NIGHT_ALL_YEAR]),
             heater_off_w=float(raw[CONF_HEATER_OFF_W]),
             min_surplus_w=float(raw[CONF_MIN_SURPLUS_W]),
             solar_start_h=int(raw[CONF_SOLAR_START_H]),
@@ -214,6 +226,8 @@ class Controller:
         # État volatil
         self.retry_after = 0.0                # monotonic
         self._fail_alerted = False
+        self.pause_active = False             # en pause au profit du chauffage / de la limite du contrat
+        self.pause_notified = False           # une seule notification Discord par épisode de pause
         self._switch_override: tuple[str, float] | None = None
         self._last_mono: float | None = None
         self._mix: dict[str, float] | None = None       # dernière répartition valide
@@ -230,6 +244,8 @@ class Controller:
         self.overload = Condition(OVERLOAD_HOLD_S)
         self.heater_idle = Condition(IDLE_HOLD_S)
         self.data_lost = Condition(FAILSAFE_S)
+        self.resume_fit = Condition(RESUME_HOLD_S)          # le ballon « rentre » sous la limite
+        self.heating_yield = Condition(YIELD_HOLD_S)        # le chauffage réclame le solaire
 
         if self.s.start_soc <= self.s.stop_soc:
             _LOGGER.warning(
@@ -412,6 +428,7 @@ class Controller:
         lock_reason: str | None = None,
         kind: str = "info",
         user: bool = False,
+        notify: bool = True,
     ) -> bool:
         """Envoie l'ordre ; l'état interne n'est modifié que s'il a réussi."""
         mono = time.monotonic()
@@ -430,14 +447,19 @@ class Controller:
         if lock_s:
             self.lock_until = time.time() + lock_s
             self.lock_reason = lock_reason
-        self._event(message, kind)
+        self._event(message, kind, notify)
         self._save()
         return True
 
     async def _cut(
-        self, message: str, lock_s: float = 0.0, lock_reason: str | None = None, kind: str = "stop"
+        self,
+        message: str,
+        lock_s: float = 0.0,
+        lock_reason: str | None = None,
+        kind: str = "stop",
+        notify: bool = True,
     ) -> bool:
-        return await self._command(False, None, message, lock_s, lock_reason, kind)
+        return await self._command(False, None, message, lock_s, lock_reason, kind, notify=notify)
 
     async def async_force(self, on: bool) -> None:
         """Marche forcée / arrêt manuel demandés depuis le panneau ou l'entité switch."""
@@ -495,6 +517,7 @@ class Controller:
             self.src_kwh = {k: 0.0 for k in SOURCES}
             self.ran_solar = False
             self.ran_night = False
+            self.pause_notified = False
             self._save()
 
         # Répartition solaire / batterie / réseau (indépendante du mode : vaut aussi en marche forcée)
@@ -519,6 +542,31 @@ class Controller:
                 elif key == "night":
                     self.ran_night = True
         self._last_mono = mono
+
+    # --- priorité au chauffage ---------------------------------------------------------
+    def _heating_wants(self) -> bool:
+        """Vrai si l'intégration de chauffage réclame le solaire (boost) en ce moment."""
+        entity = self.s.heating_priority
+        if not entity:
+            return False
+        state = self.hass.states.get(entity)
+        return state is not None and state.state == "on"
+
+    def _fits(self, solar: float | None, grid: float | None, house: float | None) -> bool:
+        """Le ballon (éteint) peut-il démarrer sans déclencher aussitôt la pause « surconsommation » ?
+
+        La pause se déclenche si la maison dépasse la limite ET si l'import réseau dépasse son seuil.
+        On vérifie donc l'une ou l'autre condition APRÈS ajout de la puissance du ballon.
+        """
+        if house is None:
+            return True  # pas de mesure : comportement historique (pas de blocage)
+        nominal = self.s.heater_nominal_w
+        if house + nominal <= self.s.max_house_power_w:
+            return True
+        if grid is None:
+            return False
+        covered = max(0.0, (solar or 0.0) - house)  # surplus solaire qui absorbera une partie du ballon
+        return max(0.0, grid + nominal - covered) <= self.s.max_grid_import_w
 
     # --- boucle -----------------------------------------------------------------------
     async def _async_tick(self, _now: datetime | None = None) -> None:
@@ -548,6 +596,11 @@ class Controller:
         in_solar = s.solar_start_h <= now.hour < s.solar_end_h
         in_hc = s.hc_start_h <= now.hour < s.hc_end_h
         winter = now.month in WINTER_MONTHS
+        night_enabled = winter or s.night_all_year
+        heating_wants = self._heating_wants()
+        fits = self._fits(solar, grid, house)
+        if on:
+            self.pause_active = False  # le ballon tourne : la pause est terminée
         day = logical_day(now, s.hc_end_h)
 
         # Conditions instantanées (mises à jour à CHAQUE cycle, avant toute décision)
@@ -572,15 +625,24 @@ class Controller:
         soc_ge = soc is not None and soc >= s.start_soc
         surplus_ge = surplus is not None and surplus >= s.min_surplus_w
         solar_ok = (
-            can_start and not already_heated and in_solar and solar_gt and soc_ge and surplus_ge
+            can_start
+            and not already_heated
+            and in_solar
+            and solar_gt
+            and soc_ge
+            and surplus_ge
+            and not heating_wants  # le chauffage est prioritaire sur le solaire
         )
         data_lost = on and self.mode == "solar" and (soc is None or grid is None or house is None)
 
         self.overload.update(overload, mono)
         self.battery_low.update(low_battery, mono)
         self.heater_idle.update(idle, mono)
+        yield_now = on and self.mode == "solar" and heating_wants
         self.solar_start.update(solar_ok, mono)
         self.data_lost.update(data_lost, mono)
+        self.resume_fit.update(off and fits, mono)
+        self.heating_yield.update(yield_now, mono)
 
         self._ctx = {
             "now": now,
@@ -594,6 +656,9 @@ class Controller:
             "in_solar": in_solar,
             "in_hc": in_hc,
             "winter": winter,
+            "night_enabled": night_enabled,
+            "heating_wants": heating_wants,
+            "fits": fits,
             "day": day,
             "checks": {
                 "in_solar": in_solar,
@@ -602,6 +667,8 @@ class Controller:
                 "solar": solar_gt,
                 "soc": soc_ge,
                 "surplus": surplus_ge,
+                "heating_free": not heating_wants,
+                "fits": fits,
             },
         }
 
@@ -616,12 +683,18 @@ class Controller:
 
         # 1. Sécurité surconsommation + import réseau (tous modes)
         if overload and self.overload.ready(mono):
-            await self._cut(
-                f"⚠️ Chauffe-eau interrompu (forte conso : {house:.0f} W et import réseau : {grid:.0f} W).",
+            ok = await self._cut(
+                f"⏸️ Chauffe-eau mis en PAUSE (maison {house:.0f} W et import réseau {grid:.0f} W) : "
+                f"le chauffage passe avant, reprise automatique dès que le ballon rentre "
+                f"sous {s.max_house_power_w:.0f} W.",
                 lock_s=OVERLOAD_LOCK_S,
-                lock_reason="surconsommation",
+                lock_reason="pause : surconsommation",
                 kind="warn",
+                notify=not self.pause_notified,
             )
+            if ok:
+                self.pause_active = True
+                self.pause_notified = True
             return
 
         # 2. Sécurité batterie (chauffe solaire uniquement)
@@ -635,6 +708,21 @@ class Controller:
             )
             return
 
+        # 2b. Priorité au chauffage : le boost solaire du chauffage réclame le surplus
+        if yield_now and self.heating_yield.ready(mono):
+            ok = await self._cut(
+                "⏸️ Chauffe-eau mis en PAUSE : le chauffage a besoin du solaire (boost). "
+                "Reprise après le boost, sinon chauffe en heures creuses.",
+                lock_s=YIELD_LOCK_S,
+                lock_reason="priorité chauffage",
+                kind="warn",
+                notify=not self.pause_notified,
+            )
+            if ok:
+                self.pause_active = True
+                self.pause_notified = True
+            return
+
         # 3. Fins de plage horaire
         if on and self.mode == "solar" and not in_solar:
             await self._cut(f"🛑 Chauffe-eau ARRÊTÉ (fin de plage solaire {s.solar_end_h:02d}h00).")
@@ -646,6 +734,8 @@ class Controller:
         # 4. Fin de cycle de chauffe (thermostat du ballon coupé)
         if idle and self.heater_idle.ready(mono):
             self.heated_day = day
+            self.pause_active = False
+            self.pause_notified = False
             self._save()
             await self._cut(
                 f"✅ Chauffe-eau ARRÊTÉ (cycle terminé, conso ~0 W depuis {IDLE_HOLD_S // 60} min)."
@@ -653,7 +743,7 @@ class Controller:
             return
 
         # 5. Démarrage solaire (seulement si aucun cycle n'est déjà terminé aujourd'hui)
-        if solar_ok and self.solar_start.ready(mono):
+        if solar_ok and self.solar_start.ready(mono) and self.resume_fit.ready(mono):
             await self._command(
                 True,
                 "solar",
@@ -661,17 +751,26 @@ class Controller:
                 f"surplus {surplus:.0f} W et batterie {soc:.0f} % "
                 f"stables depuis {SOLAR_HOLD_S // 60} min).",
                 kind="start",
+                notify=not self.pause_notified,  # reprise après une pause : pas de nouvelle notification
             )
             return
 
-        # 6. Démarrage heures creuses hivernales (si pas de cycle terminé aujourd'hui)
-        if can_start and not already_heated and winter and in_hc:
+        # 6. Démarrage heures creuses (si pas de cycle terminé aujourd'hui) : filet de sécurité
+        #    quand le solaire n'a pas suffi (hiver, ou toute l'année selon le réglage).
+        if (
+            can_start
+            and not already_heated
+            and night_enabled
+            and in_hc
+            and self.resume_fit.ready(mono)
+        ):
             await self._command(
                 True,
                 "night",
-                "🌙 Chauffe-eau DÉMARRÉ (mode hiver : pas de cycle complet aujourd'hui, "
+                "🌙 Chauffe-eau DÉMARRÉ (pas de cycle complet aujourd'hui, "
                 "chauffe en heures creuses).",
                 kind="start",
+                notify=not self.pause_notified,
             )
 
     # --- instantané pour le panneau et les entités -------------------------------------
@@ -699,6 +798,8 @@ class Controller:
                 status = "thermostat"
             else:
                 status = f"heating_{self.mode or 'manual'}"
+        elif self.pause_active and not cycle_done:
+            status = "paused"
         elif locked:
             status = "locked"
         elif cycle_done:
@@ -711,7 +812,7 @@ class Controller:
         # Heures creuses : prévues cette nuit ?
         if on and self.mode == "night":
             night_plan = "running"
-        elif not c["winter"]:
+        elif not c["night_enabled"]:
             night_plan = "off_season"
         elif cycle_done:
             night_plan = "not_needed"
@@ -748,6 +849,8 @@ class Controller:
                 "stop_soc": s.stop_soc,
                 "max_grid_import_w": s.max_grid_import_w,
                 "max_house_power_w": s.max_house_power_w,
+                "heater_nominal_w": s.heater_nominal_w,
+                "heating_priority": bool(s.heating_priority),
                 "heater_off_w": s.heater_off_w,
                 "min_surplus_w": s.min_surplus_w,
             },
@@ -757,6 +860,7 @@ class Controller:
                 "hc_start_h": s.hc_start_h,
                 "hc_end_h": s.hc_end_h,
                 "winter": c["winter"],
+                "night_enabled": c["night_enabled"],
                 "in_solar": c["in_solar"],
                 "in_hc": c["in_hc"],
             },
@@ -784,6 +888,12 @@ class Controller:
                 "remaining_s": round(locked_for),
                 "reason": self.lock_reason if locked else None,
             },
+            "priority": {
+                "enabled": bool(s.heating_priority),
+                "heating_wants": c["heating_wants"],
+                "paused": self.pause_active,
+                "fits": c["fits"],
+            },
             "start_checks": c["checks"],
             "timers": {
                 "solar_start": self.solar_start.view(mono),
@@ -791,6 +901,8 @@ class Controller:
                 "overload": self.overload.view(mono),
                 "idle": self.heater_idle.view(mono),
                 "data_lost": self.data_lost.view(mono),
+                "resume_fit": self.resume_fit.view(mono),
+                "heating_yield": self.heating_yield.view(mono),
             },
             "events": list(reversed(self.events)),
         }

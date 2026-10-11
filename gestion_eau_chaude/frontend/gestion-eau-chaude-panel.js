@@ -8,6 +8,7 @@ const STATUS = {
   heating_manual:{ label: "Marche forcée",                      color: "#ff7043", heat: 1 },
   thermostat:    { label: "Ballon chaud : thermostat atteint",  color: "#ffa726", heat: 0.75 },
   locked:        { label: "Redémarrage verrouillé",             color: "#ef5350", heat: 0.12 },
+  paused:        { label: "En pause : priorité chauffage",      color: "#ab47bc", heat: 0.12 },
   done:          { label: "Cycle terminé, ballon chaud",        color: "#66bb6a", heat: 0.75 },
   waiting_solar: { label: "En attente de surplus solaire",      color: "#26c6da", heat: 0.12 },
   standby:       { label: "Veille",                             color: "#90a4ae", heat: 0.12 },
@@ -317,6 +318,7 @@ const TEMPLATE = `
       <ul class="check">
         <li id="c-in_solar"></li><li id="c-not_done"></li><li id="c-can_start"></li>
         <li id="c-solar"></li><li id="c-soc"></li><li id="c-surplus"></li>
+        <li id="c-heating_free"></li><li id="c-fits"></li>
       </ul>
       <div class="timer" id="t-solar"></div>
     </div>
@@ -590,18 +592,18 @@ class GestionEauChaudePanel extends HTMLElement {
       lockLeft > 0 && snap.lock.reason ? `Cause : ${snap.lock.reason}` : "");
 
     // Plages horaires (24 h)
-    const sig = JSON.stringify([sch.solar_start_h, sch.solar_end_h, sch.hc_start_h, sch.hc_end_h, sch.winter]);
+    const sig = JSON.stringify([sch.solar_start_h, sch.solar_end_h, sch.hc_start_h, sch.hc_end_h, sch.winter, sch.night_enabled]);
     if (this._sig.tl !== sig) {
       this._sig.tl = sig;
       const seg = (a, b, color, text, off) =>
         `<div class="seg" style="left:${(a / 24) * 100}%;width:${((b - a) / 24) * 100}%;background:${color};${off ? "opacity:.3" : ""}">${text}</div>`;
       const ticks = [0, 6, 12, 18, 24].map((h) => `<div class="tick" style="left:${(h / 24) * 100}%">${hh(h % 24)}</div>`).join("");
       this._html("timeline",
-        seg(sch.hc_start_h, sch.hc_end_h, "#7c9cff", "🌙", !sch.winter) +
+        seg(sch.hc_start_h, sch.hc_end_h, "#7c9cff", "🌙", !sch.night_enabled) +
         seg(sch.solar_start_h, sch.solar_end_h, "#ffb300", "☀️ solaire", false) +
         ticks + `<div class="now" id="now"></div>`);
       this._el.now = this.shadowRoot.getElementById("now");
-      this._txt("tl-hint", `☀️ ${hh(sch.solar_start_h)}–${hh(sch.solar_end_h)} · 🌙 ${hh(sch.hc_start_h)}–${hh(sch.hc_end_h)} ${sch.winter ? "(saison hivernale : active)" : "(hors saison : inactif)"}`);
+      this._txt("tl-hint", `☀️ ${hh(sch.solar_start_h)}–${hh(sch.solar_end_h)} · 🌙 ${hh(sch.hc_start_h)}–${hh(sch.hc_end_h)} ${sch.night_enabled ? "(heures creuses actives)" : "(hors saison : inactif)"}`);
     }
     if (this._el.now) this._el.now.style.left = `calc(${(hourNow / 24) * 100}% - 1px)`;
 
@@ -614,6 +616,8 @@ class GestionEauChaudePanel extends HTMLElement {
       solar: [ck.solar, `Production > ${W(set.start_solar_w)} W (actuel : ${W(v.solar_w)} W)`],
       soc: [ck.soc, `Batterie ≥ ${W(set.start_soc)} % (actuel : ${W(v.soc)} %)`],
       surplus: [ck.surplus, `Surplus ≥ ${W(set.min_surplus_w)} W (actuel : ${W(v.surplus_w)} W)`],
+      heating_free: [ck.heating_free, set.heating_priority ? "Le chauffage n'a pas besoin du solaire (priorité chauffage)" : "Priorité chauffage non configurée"],
+      fits: [ck.fits, `Le ballon (${W(set.heater_nominal_w)} W) rentre sous la limite de ${W(set.max_house_power_w)} W`],
     };
     const running = snap.switch === "on";
     for (const [k, [ok, label]] of Object.entries(items)) {
@@ -632,7 +636,7 @@ class GestionEauChaudePanel extends HTMLElement {
     }
 
     // Sécurités
-    this._timerBar("overload", "", `Import > ${W(set.max_grid_import_w)} W et maison > ${W(set.max_house_power_w)} W`, snap);
+    this._timerBar("overload", "", `Pause si import > ${W(set.max_grid_import_w)} W et maison > ${W(set.max_house_power_w)} W`, snap);
     this._timerBar("battery_low", "", `Batterie < ${W(set.stop_soc)} %`, snap);
     this._timerBar("idle", "", `Ballon < ${W(set.heater_off_w)} W`, snap);
     this._timerBar("data_lost", "", "Mesures OK", snap);

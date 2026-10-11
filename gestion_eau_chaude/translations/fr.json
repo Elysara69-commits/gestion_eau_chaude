@@ -15,14 +15,17 @@
           "min_surplus_w": "Démarrage solaire : surplus minimal (production - maison)",
           "start_soc": "Démarrage solaire : batterie minimale",
           "stop_soc": "Arrêt solaire : batterie sous ce seuil",
-          "max_grid_import_w": "Surconsommation : import réseau anormal",
-          "max_house_power_w": "Surconsommation : consommation maison trop forte",
+          "max_grid_import_w": "Pause : import réseau anormal",
+          "max_house_power_w": "Pause : consommation maison trop forte (limite du contrat moins une marge)",
           "heater_off_w": "Puissance sous laquelle le ballon est considéré arrêté",
           "solar_start_h": "Début de la plage solaire (heure)",
           "solar_end_h": "Fin de la plage solaire (heure)",
           "hc_start_h": "Début des heures creuses (heure)",
           "hc_end_h": "Fin des heures creuses (heure)",
-          "discord_webhook_url": "Webhook Discord (optionnel)"
+          "discord_webhook_url": "Webhook Discord (optionnel)",
+          "heater_nominal_w": "Puissance du ballon (W) : vérifie qu'il rentre avant de (re)démarrer",
+          "night_all_year": "Chauffe en heures creuses toute l'année si le solaire n'a pas suffi (sinon novembre à mars)",
+          "heating_priority_entity": "Priorité au chauffage : capteur « le chauffage veut le solaire » (optionnel)"
         }
       }
     },
@@ -49,14 +52,17 @@
           "min_surplus_w": "Démarrage solaire : surplus minimal (production - maison)",
           "start_soc": "Démarrage solaire : batterie minimale",
           "stop_soc": "Arrêt solaire : batterie sous ce seuil",
-          "max_grid_import_w": "Surconsommation : import réseau anormal",
-          "max_house_power_w": "Surconsommation : consommation maison trop forte",
+          "max_grid_import_w": "Pause : import réseau anormal",
+          "max_house_power_w": "Pause : consommation maison trop forte (limite du contrat moins une marge)",
           "heater_off_w": "Puissance sous laquelle le ballon est considéré arrêté",
           "solar_start_h": "Début de la plage solaire (heure)",
           "solar_end_h": "Fin de la plage solaire (heure)",
           "hc_start_h": "Début des heures creuses (heure)",
           "hc_end_h": "Fin des heures creuses (heure)",
-          "discord_webhook_url": "Webhook Discord (optionnel)"
+          "discord_webhook_url": "Webhook Discord (optionnel)",
+          "heater_nominal_w": "Puissance du ballon (W) : vérifie qu'il rentre avant de (re)démarrer",
+          "night_all_year": "Chauffe en heures creuses toute l'année si le solaire n'a pas suffi (sinon novembre à mars)",
+          "heating_priority_entity": "Priorité au chauffage : capteur « le chauffage veut le solaire » (optionnel)"
         }
       }
     },

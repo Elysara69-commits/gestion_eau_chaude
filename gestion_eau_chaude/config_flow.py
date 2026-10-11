@@ -14,13 +14,16 @@ from .const import (
     CONF_GRID_IMPORT,
     CONF_HC_END_H,
     CONF_HC_START_H,
+    CONF_HEATER_NOMINAL_W,
     CONF_HEATER_OFF_W,
     CONF_HEATER_POWER,
     CONF_HEATER_SWITCH,
+    CONF_HEATING_PRIORITY,
     CONF_HOUSE_POWER,
     CONF_MAX_GRID_IMPORT_W,
     CONF_MAX_HOUSE_POWER_W,
     CONF_MIN_SURPLUS_W,
+    CONF_NIGHT_ALL_YEAR,
     CONF_SOLAR_END_H,
     CONF_SOLAR_POWER,
     CONF_SOLAR_START_H,
@@ -38,6 +41,7 @@ FLOAT_KEYS = (
     CONF_STOP_SOC,
     CONF_MAX_GRID_IMPORT_W,
     CONF_MAX_HOUSE_POWER_W,
+    CONF_HEATER_NOMINAL_W,
     CONF_HEATER_OFF_W,
     CONF_MIN_SURPLUS_W,
 )
@@ -58,6 +62,7 @@ def _number(min_: float, max_: float, step: float, unit: str | None = None):
 def _schema(values: dict[str, Any]) -> vol.Schema:
     sensor = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
     switch = selector.EntitySelector(selector.EntitySelectorConfig(domain="switch"))
+    binary = selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor"))
 
     def d(key: str) -> Any:
         return values.get(key, DEFAULTS[key])
@@ -76,11 +81,21 @@ def _schema(values: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_STOP_SOC, default=d(CONF_STOP_SOC)): _number(0, 100, 1, "%"),
             vol.Required(CONF_MAX_GRID_IMPORT_W, default=d(CONF_MAX_GRID_IMPORT_W)): _number(0, 20000, 10, "W"),
             vol.Required(CONF_MAX_HOUSE_POWER_W, default=d(CONF_MAX_HOUSE_POWER_W)): _number(0, 30000, 50, "W"),
+            vol.Required(CONF_HEATER_NOMINAL_W, default=d(CONF_HEATER_NOMINAL_W)): _number(100, 10000, 50, "W"),
             vol.Required(CONF_HEATER_OFF_W, default=d(CONF_HEATER_OFF_W)): _number(0, 500, 1, "W"),
             vol.Required(CONF_SOLAR_START_H, default=d(CONF_SOLAR_START_H)): _number(0, 23, 1, "h"),
             vol.Required(CONF_SOLAR_END_H, default=d(CONF_SOLAR_END_H)): _number(1, 24, 1, "h"),
             vol.Required(CONF_HC_START_H, default=d(CONF_HC_START_H)): _number(0, 23, 1, "h"),
             vol.Required(CONF_HC_END_H, default=d(CONF_HC_END_H)): _number(1, 24, 1, "h"),
+            vol.Required(CONF_NIGHT_ALL_YEAR, default=bool(d(CONF_NIGHT_ALL_YEAR))): selector.BooleanSelector(),
+            vol.Optional(
+                CONF_HEATING_PRIORITY,
+                description=(
+                    {"suggested_value": values[CONF_HEATING_PRIORITY]}
+                    if values.get(CONF_HEATING_PRIORITY)
+                    else {}
+                ),
+            ): binary,
             vol.Optional(
                 CONF_DISCORD, description={"suggested_value": values.get(CONF_DISCORD, "")}
             ): selector.TextSelector(),
@@ -95,6 +110,8 @@ def _normalize(user_input: dict[str, Any]) -> dict[str, Any]:
     for key in FLOAT_KEYS:
         data[key] = float(data[key])
     data[CONF_DISCORD] = (data.get(CONF_DISCORD) or "").strip()
+    data[CONF_HEATING_PRIORITY] = (data.get(CONF_HEATING_PRIORITY) or "").strip()
+    data[CONF_NIGHT_ALL_YEAR] = bool(data.get(CONF_NIGHT_ALL_YEAR, True))
     return data
 
 
