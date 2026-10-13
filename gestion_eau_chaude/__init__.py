@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .api import ws_force, ws_subscribe
+from .api import ws_auto, ws_force, ws_stop, ws_subscribe
 from .const import DOMAIN, PANEL_ELEMENT, PANEL_URL, STATIC_URL, VERSION
 from .controller import Controller
 
@@ -26,6 +26,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data.setdefault(DOMAIN, {})
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_force)
+    websocket_api.async_register_command(hass, ws_stop)
+    websocket_api.async_register_command(hass, ws_auto)
     return True
 
 

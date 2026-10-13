@@ -216,6 +216,7 @@ class Controller:
         self.heated_day: date | None = None   # dernière journée logique avec cycle terminé
         self.lock_until = 0.0                 # horodatage epoch (anti-yoyo)
         self.lock_reason: str | None = None
+        self.auto_enabled = True              # False = arrêt manuel : AUCUN démarrage automatique tant que non réactivé
         self.day: str | None = None           # jour calendaire des compteurs
         self.kwh: dict[str, float] = {"solar": 0.0, "night": 0.0, "manual": 0.0}  # par MODE de chauffe
         self.src_kwh: dict[str, float] = {k: 0.0 for k in SOURCES}                # par SOURCE d'énergie
@@ -317,6 +318,7 @@ class Controller:
         except (TypeError, ValueError):
             self.lock_until = 0.0
         self.lock_reason = data.get("lock_reason")
+        self.auto_enabled = bool(data.get("auto_enabled", True))
         self.day = data.get("day")
         kwh = data.get("kwh") or {}
         for key in self.kwh:
@@ -340,6 +342,7 @@ class Controller:
             "heated_day": self.heated_day.isoformat() if self.heated_day else None,
             "lock_until": self.lock_until,
             "lock_reason": self.lock_reason,
+            "auto_enabled": self.auto_enabled,
             "day": self.day,
             "kwh": self.kwh,
             "src_kwh": self.src_kwh,
@@ -462,7 +465,11 @@ class Controller:
         return await self._command(False, None, message, lock_s, lock_reason, kind, notify=notify)
 
     async def async_force(self, on: bool) -> None:
-        """Marche forcée / arrêt manuel demandés depuis le panneau ou l'entité switch."""
+        """Marche forcée (on=True) ou fin de marche forcée (on=False)."""
+        if not on and self.mode != "manual":
+            # Le ballon ne tourne pas en marche forcée : « couper » = vrai arrêt manuel.
+            await self.async_stop_and_suspend()
+            return
         async with self._lock:
             if on:
                 ok = await self._command(
@@ -473,23 +480,73 @@ class Controller:
                     user=True,
                 )
             else:
-                message = (
-                    "🔧 Marche forcée désactivée : chauffe-eau coupé."
-                    if self.mode == "manual"
-                    else "🔧 Chauffe-eau coupé manuellement depuis Home Assistant."
-                )
                 ok = await self._command(
                     False,
                     None,
-                    message,
+                    "🔧 Marche forcée désactivée : chauffe-eau coupé.",
                     lock_s=MANUAL_LOCK_S,
-                    lock_reason="arrêt manuel",
+                    lock_reason="fin de marche forcée",
                     kind="stop",
                     user=True,
                 )
             self._push()
             if not ok:
                 raise HomeAssistantError("Échec de la commande du chauffe-eau (voir les journaux).")
+
+    async def async_stop_and_suspend(self) -> None:
+        """Arrêt manuel : coupe le chauffe-eau ET suspend tout démarrage automatique.
+
+        La suspension est persistée (survit au redémarrage de HA) et dure jusqu'à
+        ce que l'utilisateur réactive le pilotage automatique.
+        """
+        async with self._lock:
+            self.auto_enabled = False  # posé d'abord : l'intention est enregistrée même si la coupure échoue
+            self.lock_until = 0.0
+            self.lock_reason = None
+            ok = True
+            if self._switch_state(time.monotonic()) != "off":
+                ok = await self._command(
+                    False,
+                    None,
+                    "🔧 Chauffe-eau coupé manuellement : démarrage automatique SUSPENDU "
+                    "jusqu'à réactivation du pilotage automatique.",
+                    kind="stop",
+                    user=True,
+                )
+            else:
+                self._event(
+                    "⏸️ Démarrage automatique SUSPENDU jusqu'à réactivation du pilotage automatique.",
+                    "warn",
+                )
+            await self._store.async_save(self._payload())
+            self._push()
+            if not ok:
+                raise HomeAssistantError(
+                    "Pilotage automatique suspendu, mais la coupure du chauffe-eau a échoué "
+                    "(voir les journaux)."
+                )
+
+    async def async_set_auto(self, on: bool) -> None:
+        """Active / suspend le pilotage automatique (sans toucher à l'état du ballon)."""
+        async with self._lock:
+            if on != self.auto_enabled:
+                self.auto_enabled = on
+                if on:
+                    if self.lock_reason == "arrêt manuel":
+                        self.lock_until = 0.0
+                        self.lock_reason = None
+                    self._event(
+                        "▶️ Pilotage automatique RÉACTIVÉ : le chauffe-eau peut de nouveau démarrer "
+                        "seul (solaire / heures creuses).",
+                        "start",
+                    )
+                else:
+                    self._event(
+                        "⏸️ Pilotage automatique SUSPENDU : le chauffe-eau ne démarrera plus seul.",
+                        "warn",
+                    )
+                await self._store.async_save(self._payload())
+            self._push()
 
     def _sync_mode(self, sw: str | None) -> None:
         """Le mode doit suivre l'état réel du switch (coupure ou allumage externe)."""
@@ -613,7 +670,9 @@ class Controller:
         )
         low_battery = on and self.mode == "solar" and soc is not None and soc < s.stop_soc
         idle = on and heater_w is not None and heater_w < s.heater_off_w
-        can_start = off and self.mode is None and not locked
+        # Arrêt manuel : tant que le pilotage automatique n'est pas réactivé, rien ne démarre seul
+        # (ni solaire, ni heures creuses : les deux démarrages exigent can_start).
+        can_start = off and self.mode is None and not locked and self.auto_enabled
         # Cycle déjà terminé sur la journée logique en cours : ballon chaud,
         # inutile de le relancer (il ne consommerait rien et bouclerait toutes les 30 min).
         already_heated = self.heated_day == day
@@ -798,6 +857,8 @@ class Controller:
                 status = "thermostat"
             else:
                 status = f"heating_{self.mode or 'manual'}"
+        elif not self.auto_enabled:
+            status = "suspended"
         elif self.pause_active and not cycle_done:
             status = "paused"
         elif locked:
@@ -812,6 +873,8 @@ class Controller:
         # Heures creuses : prévues cette nuit ?
         if on and self.mode == "night":
             night_plan = "running"
+        elif not self.auto_enabled:
+            night_plan = "suspended"
         elif not c["night_enabled"]:
             night_plan = "off_season"
         elif cycle_done:
@@ -835,6 +898,7 @@ class Controller:
             "mode": self.mode,
             "switch": sw,
             "forced": forced,
+            "auto": self.auto_enabled,
             "values": {
                 "solar_w": c["solar"],
                 "soc": c["soc"],

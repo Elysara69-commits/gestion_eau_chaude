@@ -7,6 +7,7 @@ const STATUS = {
   heating_night: { label: "Chauffe en heures creuses",          color: "#7c9cff", heat: 1 },
   heating_manual:{ label: "Marche forcée",                      color: "#ff7043", heat: 1 },
   thermostat:    { label: "Ballon chaud : thermostat atteint",  color: "#ffa726", heat: 0.75 },
+  suspended:     { label: "Arrêt manuel : démarrage auto suspendu", color: "#f06292", heat: 0.12 },
   locked:        { label: "Redémarrage verrouillé",             color: "#ef5350", heat: 0.12 },
   paused:        { label: "En pause : priorité chauffage",      color: "#ab47bc", heat: 0.12 },
   done:          { label: "Cycle terminé, ballon chaud",        color: "#66bb6a", heat: 0.75 },
@@ -118,6 +119,7 @@ const TEMPLATE = `
   .sw span { position: absolute; inset: 0; border-radius: 16px; background: var(--line); cursor: pointer; transition: background .3s; }
   .sw span::after { content: ""; position: absolute; width: 26px; height: 26px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: transform .3s; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
   .sw input:checked + span { background: #ff7043; }
+  .sw.auto input:checked + span { background: #66bb6a; }
   .sw input:checked + span::after { transform: translateX(26px); }
   .sw input:disabled + span { opacity: .5; cursor: wait; }
   .btn { width: 100%; padding: 10px; border-radius: 12px; border: 1px solid var(--bad); background: transparent; color: var(--bad); font-size: 14px; cursor: pointer; display: none; }
@@ -264,7 +266,14 @@ const TEMPLATE = `
         </div>
         <label class="sw"><input type="checkbox" id="force"><span></span></label>
       </div>
-      <button class="btn" id="stop">Couper le chauffe-eau maintenant</button>
+      <div class="card force" id="auto-card">
+        <div class="txt">
+          <b>Pilotage automatique</b>
+          <small id="auto-s">Le chauffe-eau démarre seul selon le solaire et les heures creuses.</small>
+        </div>
+        <label class="sw auto"><input type="checkbox" id="auto"><span></span></label>
+      </div>
+      <button class="btn" id="stop">Couper le chauffe-eau et suspendre l'automatique</button>
     </div>
 
     <div class="col">${METRICS.slice(3).map(metricCard).join("")}</div>
@@ -393,8 +402,9 @@ class GestionEauChaudePanel extends HTMLElement {
     if (this._hass) this._menu.hass = this._hass;
     if (this._narrow !== undefined) this._menu.narrow = this._narrow;
 
-    this._el.force.addEventListener("change", (e) => this._send(e.target.checked, e.target));
-    this._el.stop.addEventListener("click", () => this._send(false, this._el.stop));
+    this._el.force.addEventListener("change", (e) => this._call({ type: "gestion_eau_chaude/force", on: e.target.checked }, e.target));
+    this._el.auto.addEventListener("change", (e) => this._call({ type: "gestion_eau_chaude/auto", on: e.target.checked }, e.target));
+    this._el.stop.addEventListener("click", () => this._call({ type: "gestion_eau_chaude/stop" }, this._el.stop));
     this._built = true;
   }
 
@@ -417,11 +427,11 @@ class GestionEauChaudePanel extends HTMLElement {
     }
   }
 
-  async _send(on, control) {
+  async _call(payload, control) {
     this._pending = true;
     control.disabled = true;
     try {
-      await this._hass.connection.sendMessagePromise({ type: "gestion_eau_chaude/force", on });
+      await this._hass.connection.sendMessagePromise(payload);
     } catch (err) {
       this._toast("Commande refusée : " + (err && err.message ? err.message : "erreur"));
     } finally {
@@ -518,7 +528,16 @@ class GestionEauChaudePanel extends HTMLElement {
     // Marche forcée
     if (!this._pending) this._el.force.checked = !!snap.forced;
     this._el.force.disabled = this._pending || snap.switch == null;
-    this._el.stop.style.display = snap.switch === "on" && !snap.forced ? "block" : "none";
+    this._el.stop.style.display = snap.switch === "on" ? "block" : "none";
+
+    // Pilotage automatique (off = arrêt manuel : aucun démarrage automatique)
+    const autoOn = snap.auto !== false;
+    if (!this._pending) this._el.auto.checked = autoOn;
+    this._el.auto.disabled = this._pending;
+    this._el["auto-card"].style.boxShadow = autoOn ? "" : "inset 0 0 0 1px var(--bad)";
+    this._txt("auto-s", autoOn
+      ? "Le chauffe-eau démarre seul selon le solaire et les heures creuses."
+      : "SUSPENDU : le chauffe-eau ne démarrera pas tout seul tant que tu ne réactives pas le pilotage.");
 
     // Mesures
     const solarMax = Math.max(3500, set.start_solar_w * 1.6);
@@ -578,6 +597,7 @@ class GestionEauChaudePanel extends HTMLElement {
       planned:    ["warn", "Heures creuses : chauffe prévue cette nuit", `${hh(sch.hc_start_h)}–${hh(sch.hc_end_h)} si le cycle n'est pas terminé d'ici là`],
       not_needed: ["ok",   "Heures creuses : inutile cette nuit", "Cycle de chauffe déjà terminé"],
       off_season: ["",     "Heures creuses : hors saison", "Actives de novembre à mars uniquement"],
+      suspended:  ["bad",  "Heures creuses : suspendues (arrêt manuel)", "Pilotage automatique désactivé"],
     }[snap.night_plan];
     this._row("r-night", plan[0], snap.ran_night ? "A chauffé en heures creuses (" + nf2.format(bm.night) + " kWh)" : plan[1],
       snap.ran_night ? plan[1] : plan[2]);
@@ -587,9 +607,14 @@ class GestionEauChaudePanel extends HTMLElement {
       `Journée de chauffe : ${hh(sch.hc_end_h)} → ${hh(sch.hc_end_h)}`);
 
     const lockLeft = Math.max(0, snap.lock.remaining_s - dt);
-    this._row("r-lock", lockLeft > 0 ? "bad" : "",
-      lockLeft > 0 ? `Redémarrage verrouillé (${mmss(lockLeft)})` : "Redémarrage automatique libre",
-      lockLeft > 0 && snap.lock.reason ? `Cause : ${snap.lock.reason}` : "");
+    if (!autoOn) {
+      this._row("r-lock", "bad", "Démarrage automatique suspendu (arrêt manuel)",
+        "Jusqu'à réactivation du pilotage automatique");
+    } else {
+      this._row("r-lock", lockLeft > 0 ? "bad" : "",
+        lockLeft > 0 ? `Redémarrage verrouillé (${mmss(lockLeft)})` : "Redémarrage automatique libre",
+        lockLeft > 0 && snap.lock.reason ? `Cause : ${snap.lock.reason}` : "");
+    }
 
     // Plages horaires (24 h)
     const sig = JSON.stringify([sch.solar_start_h, sch.solar_end_h, sch.hc_start_h, sch.hc_end_h, sch.winter, sch.night_enabled]);
@@ -612,7 +637,7 @@ class GestionEauChaudePanel extends HTMLElement {
     const items = {
       in_solar: [ck.in_solar, `Dans la plage solaire (${hh(sch.solar_start_h)}–${hh(sch.solar_end_h)})`],
       not_done: [ck.not_done, "Cycle de chauffe pas encore terminé"],
-      can_start: [ck.can_start, "Chauffe-eau à l'arrêt et redémarrage libre"],
+      can_start: [ck.can_start, "Chauffe-eau à l'arrêt, redémarrage libre et pilotage automatique actif"],
       solar: [ck.solar, `Production > ${W(set.start_solar_w)} W (actuel : ${W(v.solar_w)} W)`],
       soc: [ck.soc, `Batterie ≥ ${W(set.start_soc)} % (actuel : ${W(v.soc)} %)`],
       surplus: [ck.surplus, `Surplus ≥ ${W(set.min_surplus_w)} W (actuel : ${W(v.surplus_w)} W)`],

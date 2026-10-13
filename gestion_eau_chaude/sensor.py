@@ -127,4 +127,5 @@ class EauChaudeSensor(EauChaudeEntity, SensorEntity):
             "verrou_restant_s": self.snap["lock"]["remaining_s"],
             "verrou_raison": self.snap["lock"]["reason"],
             "heures_creuses": self.snap.get("night_plan"),
+            "pilotage_automatique": self.snap.get("auto"),
         }

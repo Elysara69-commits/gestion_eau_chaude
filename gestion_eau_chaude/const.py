@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "gestion_eau_chaude"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 PANEL_URL = "gestion_eau_chaude"
 PANEL_ELEMENT = "gestion-eau-chaude-panel"
@@ -75,7 +75,7 @@ RETRY_DELAY_S = 30      # pause après un ordre échoué
 RESUME_HOLD_S = 60      # le ballon doit « rentrer » sous la limite pendant 1 min avant de (re)démarrer
 YIELD_HOLD_S = 120      # le chauffage réclame le solaire pendant 2 min avant de couper un ballon en marche solaire
 YIELD_LOCK_S = 300      # verrou après une pause au profit du chauffage (anti-yoyo)
-MANUAL_LOCK_S = 3600    # pas de redémarrage automatique pendant 1 h après un arrêt manuel
+MANUAL_LOCK_S = 3600    # verrou de 1 h après la FIN d'une marche forcée (l'arrêt manuel, lui, suspend l'automatique sans limite)
 SWITCH_OVERRIDE_S = 10  # durée de validité de l'état « optimiste » après un ordre
 MAX_DT_S = 120          # plafond du pas de temps pour l'intégration d'énergie
 MIX_STALE_S = 300       # si les mesures manquent, on réutilise la dernière répartition de sources pendant 5 min
@@ -88,6 +88,7 @@ STATUS_LABELS = {
     "heating_night": "Chauffe en heures creuses",
     "heating_manual": "Marche forcée",
     "thermostat": "Ballon chaud (thermostat atteint)",
+    "suspended": "Arrêt manuel : démarrage automatique suspendu",
     "locked": "Redémarrage verrouillé",
     "paused": "En pause (priorité chauffage)",
     "done": "Cycle terminé, ballon chaud",
